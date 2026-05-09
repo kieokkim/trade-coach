@@ -1,7 +1,9 @@
 import json
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+
+from tools.concept_tool import search_ict_concept
 
 _llm: ChatOpenAI | None = None
 
@@ -66,4 +68,11 @@ def weakness_detect_node(state: dict) -> dict:
 
     recurring = [w for w in current if w in past]
     new_ones  = [w for w in current if w not in past]
-    return {"weaknesses": recurring + new_ones}
+    weaknesses = recurring + new_ones
+
+    messages = list(state.get("messages", []))
+    if weaknesses:
+        concept_info = search_ict_concept.invoke({"weakness_tag": weaknesses[0]})
+        messages.append(AIMessage(content=concept_info))
+
+    return {"weaknesses": weaknesses, "messages": messages}
