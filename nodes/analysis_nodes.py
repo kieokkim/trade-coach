@@ -20,12 +20,14 @@ def _get_llm() -> ChatOpenAI:
 
 _ANALYSIS_SYSTEM = """\
 You are a trading journal analyzer. Parse the trading journal and return JSON with exactly these keys:
-  win_rate:     float 0.0-1.0  (winning trades / total trades)
-  avg_rr:       float          (average risk:reward ratio; 0.0 if column absent)
-  max_drawdown: int            (maximum consecutive losing trades)
-  best_setup:   str            (setup/pattern name with highest win rate; "" if unavailable)
-  worst_setup:  str            (setup/pattern name with lowest win rate; "" if unavailable)
-  trade_count:  int            (total number of trades parsed)"""
+  win_rate:      float 0.0-1.0  (winning trades / total trades)
+  avg_rr:        float          (average risk:reward ratio; 0.0 if column absent)
+  max_drawdown:  int            (maximum consecutive losing trades)
+  best_setup:    str            (setup/pattern name with highest win rate; "" if unavailable)
+  worst_setup:   str            (setup/pattern name with lowest win rate; "" if unavailable)
+  trade_count:   int            (total number of trades parsed)
+  setup_analysis: object       (per-setup win rate dict, e.g. {"FVG": 0.33, "OB": 0.5}; {} if setup column absent)
+  action_rule:   str            (one concrete rule to apply tomorrow, in Korean, as a prohibition or requirement; e.g. "OB 셋업은 BOS 확인 후에만 진입할 것")"""
 
 _WEAKNESS_RULES = [
     ("win_rate",     lambda v: v < 0.4, "승률_낮음"),
@@ -45,7 +47,11 @@ def journal_analysis_node(state: dict) -> dict:
         stats = json.loads(msg.content)
     except Exception as e:
         stats = {"error": str(e)}
-    return {"stats": stats}
+    return {
+        "stats":          stats,
+        "setup_analysis": stats.get("setup_analysis", {}),
+        "action_rule":    stats.get("action_rule", ""),
+    }
 
 
 def weakness_detect_node(state: dict) -> dict:
