@@ -1,9 +1,12 @@
 import json
+import logging
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from tools.concept_tool import search_ict_concept
+from tools.concept_tool import search_ict_concept, CONCEPT_NOT_FOUND_PREFIX
+
+logger = logging.getLogger(__name__)
 
 _llm: ChatOpenAI | None = None
 
@@ -38,6 +41,8 @@ _WEAKNESS_RULES = [
 
 def journal_analysis_node(state: dict) -> dict:
     """CSV 파싱 + OpenAI로 트레이드 통계 산출."""
+    session_id = state.get("session_id", "default")
+    logger.info("journal_analysis_node start | session_id=%s", session_id)
     journal_data = state.get("journal_data", "")
     try:
         msg = _get_llm().invoke([
@@ -46,7 +51,9 @@ def journal_analysis_node(state: dict) -> dict:
         ])
         stats = json.loads(msg.content)
     except Exception as e:
+        logger.warning("journal_analysis_node LLM error: %s", e)
         stats = {"error": str(e)}
+    logger.info("journal_analysis_node end | session_id=%s stats_keys=%s", session_id, list(stats.keys()))
     return {
         "stats":          stats,
         "setup_analysis": stats.get("setup_analysis", {}),
@@ -56,10 +63,13 @@ def journal_analysis_node(state: dict) -> dict:
 
 def weakness_detect_node(state: dict) -> dict:
     """stats 임계값 + past_weaknesses 교차 분석으로 weakness 태그 추출."""
+    session_id = state.get("session_id", "default")
+    logger.info("weakness_detect_node start | session_id=%s", session_id)
     stats = state.get("stats", {})
     past  = state.get("past_weaknesses", [])
 
     if "error" in stats:
+        logger.warning("weakness_detect_node: stats contains error, skipping detection")
         return {"weaknesses": []}
 
     current: list[str] = []
@@ -77,8 +87,13 @@ def weakness_detect_node(state: dict) -> dict:
     weaknesses = recurring + new_ones
 
     messages = list(state.get("messages", []))
+    concept_not_found = False
     if weaknesses:
         concept_info = search_ict_concept.invoke({"weakness_tag": weaknesses[0]})
-        messages.append(AIMessage(content=concept_info))
+        if concept_info.startswith(CONCEPT_NOT_FOUND_PREFIX):
+            concept_not_found = True
+        else:
+            messages.append(AIMessage(content=concept_info))
 
-    return {"weaknesses": weaknesses, "messages": messages}
+    logger.info("weakness_detect_node end | session_id=%s weaknesses=%s", session_id, weaknesses)
+    return {"weaknesses": weaknesses, "messages": messages, "concept_not_found": concept_not_found}

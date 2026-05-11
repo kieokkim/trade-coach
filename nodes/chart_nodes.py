@@ -1,7 +1,10 @@
 import json
+import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+
+logger = logging.getLogger(__name__)
 
 _vision_llm: ChatOpenAI | None = None
 _feedback_llm: ChatOpenAI | None = None
@@ -54,8 +57,11 @@ Return JSON with exactly these keys:
 
 def chart_analysis_node(state: dict) -> dict:
     """base64 차트 이미지 → OpenAI Vision(gpt-4o) → ICT 근거 분석."""
+    session_id = state.get("session_id", "default")
+    logger.info("chart_analysis_node start | session_id=%s", session_id)
     chart_image = state.get("chart_image", "").strip()
     if not chart_image:
+        logger.info("chart_analysis_node: no chart_image, skipping")
         return {"chart_feedback": ""}
 
     # data URI prefix 제거
@@ -76,15 +82,20 @@ def chart_analysis_node(state: dict) -> dict:
                 {"type": "text", "text": "이 차트를 ICT 관점에서 분석해주세요."},
             ]),
         ])
+        logger.info("chart_analysis_node end | session_id=%s", session_id)
         return {"chart_feedback": msg.content}
     except Exception as e:
+        logger.warning("chart_analysis_node Vision error: %s", e)
         return {"chart_feedback": f"분석 오류: {e}"}
 
 
 def feedback_node(state: dict) -> dict:
     """chart_feedback 구조화 → chart_weaknesses를 weaknesses에 병합."""
+    session_id = state.get("session_id", "default")
+    logger.info("feedback_node start | session_id=%s", session_id)
     chart_feedback = state.get("chart_feedback", "").strip()
     if not chart_feedback or chart_feedback.startswith("분석 오류"):
+        logger.info("feedback_node: no valid chart_feedback, skipping")
         return {}
 
     existing_weaknesses = list(state.get("weaknesses", []))
@@ -95,7 +106,8 @@ def feedback_node(state: dict) -> dict:
             HumanMessage(content=f"Chart analysis:\n{chart_feedback}"),
         ])
         structured = json.loads(msg.content)
-    except Exception:
+    except Exception as e:
+        logger.warning("feedback_node LLM error: %s", e)
         return {}
 
     chart_weaknesses = structured.get("chart_weaknesses", [])
@@ -106,6 +118,7 @@ def feedback_node(state: dict) -> dict:
     if improvement:
         messages.append({"role": "assistant", "content": improvement})
 
+    logger.info("feedback_node end | session_id=%s merged_weaknesses=%d", session_id, len(merged))
     return {
         "weaknesses": merged,
         "messages":   messages,
