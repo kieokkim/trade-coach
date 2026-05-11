@@ -4,6 +4,7 @@ import logging
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from config import WIN_RATE_THRESHOLD, AVG_RR_THRESHOLD, MAX_DRAWDOWN_THRESHOLD
 from tools.concept_tool import search_ict_concept, CONCEPT_NOT_FOUND_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -33,9 +34,9 @@ You are a trading journal analyzer. Parse the trading journal and return JSON wi
   action_rule:   str            (one concrete rule to apply tomorrow, in Korean, as a prohibition or requirement; e.g. "OB 셋업은 BOS 확인 후에만 진입할 것")"""
 
 _WEAKNESS_RULES = [
-    ("win_rate",     lambda v: v < 0.4, "승률_낮음"),
-    ("avg_rr",       lambda v: v < 1.5, "손익비_부족"),
-    ("max_drawdown", lambda v: v >= 3,  "연속손실_패턴"),
+    ("win_rate",     lambda v: v < WIN_RATE_THRESHOLD,     "승률_낮음"),
+    ("avg_rr",       lambda v: v < AVG_RR_THRESHOLD,       "손익비_부족"),
+    ("max_drawdown", lambda v: v >= MAX_DRAWDOWN_THRESHOLD, "연속손실_패턴"),
 ]
 
 

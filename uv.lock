@@ -1821,6 +1821,7 @@ dependencies = [
     { name = "langgraph-cli", extra = ["inmem"] },
     { name = "pandas" },
     { name = "python-dotenv" },
+    { name = "requests" },
 ]
 
 [package.dev-dependencies]
@@ -1837,6 +1838,7 @@ requires-dist = [
     { name = "langgraph-cli", extras = ["inmem"], specifier = "==0.4.0" },
     { name = "pandas", specifier = ">=3.0.2" },
     { name = "python-dotenv", specifier = "==1.1.1" },
+    { name = "requests", specifier = ">=2.33.1" },
 ]
 
 [package.metadata.requires-dev]
