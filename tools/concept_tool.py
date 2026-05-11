@@ -6,6 +6,8 @@ from langchain_core.tools import tool
 _CONCEPTS_PATH = Path(__file__).parent / "ict_concepts.json"
 _concepts: dict | None = None
 
+CONCEPT_NOT_FOUND_PREFIX = "해당 개념을 찾을 수 없습니다"
+
 
 def _load_concepts() -> dict:
     global _concepts
