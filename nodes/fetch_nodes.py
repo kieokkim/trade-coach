@@ -19,6 +19,10 @@ def new_data_check_node(state: dict) -> dict:
     session_id = state.get("session_id", "default")
     logger.info("new_data_check_node start | session_id=%s", session_id)
 
+    if state.get("input_type") == "journal":
+        logger.info("new_data_check_node: journal mode, skip bybit | session_id=%s", session_id)
+        return {"has_new_data": False}
+
     last_fetched_at = state.get("last_fetched_at", "")
     if not last_fetched_at:
         logger.info("new_data_check_node: first run, has_new_data=True | session_id=%s", session_id)

@@ -1,4 +1,5 @@
 import base64
+import os
 
 import pandas as pd
 import streamlit as st
@@ -13,6 +14,36 @@ with st.sidebar:
     st.title("⚙️ TradeCoach")
 
     session_id = st.text_input("Session ID", value="default", key="session_id")
+
+    st.divider()
+
+    api_key = os.getenv("BYBIT_API_KEY", "")
+    if api_key:
+        st.success("Bybit API 키 감지됨")
+    else:
+        st.caption("Bybit API 키 미설정 (샘플 데이터 사용)")
+
+    if st.button("▶ Bybit 분석 시작", type="primary", key="run_bybit"):
+        with st.spinner("Bybit 데이터 수집 및 분석 중..."):
+            state = {
+                **DEFAULT_STATE,
+                "session_id": session_id,
+                "input_type": "bybit",
+                "journal_data": "",
+                "raw_trades": [],
+            }
+            result = graph.invoke(state)
+        st.session_state["last_result"] = result
+        coaching = result.get("coaching_output", "")
+        if coaching:
+            st.subheader("💬 코칭 결과")
+            st.write(coaching)
+        else:
+            action_rule = result.get("action_rule", "")
+            if action_rule:
+                st.success(action_rule)
+            else:
+                st.info("분석 완료 (Tab 3에서 성과 기록 확인)")
 
     st.divider()
 
@@ -61,7 +92,9 @@ with tab1:
             state = {
                 **DEFAULT_STATE,
                 "session_id":   session_id,
+                "input_type":   "journal",
                 "journal_data": journal_input,
+                "raw_trades":   [],
             }
             result = graph.invoke(state)
 
