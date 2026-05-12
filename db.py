@@ -57,6 +57,20 @@ def init_db() -> None:
                 date         DATE    NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS performance_snapshots (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id      TEXT    NOT NULL,
+                period          TEXT,
+                period_start    DATE,
+                win_rate        FLOAT,
+                avg_return_rate FLOAT,
+                expected_value  FLOAT,
+                loss_consistency FLOAT,
+                profit_rate     FLOAT,
+                top_weakness    TEXT,
+                action_rule     TEXT
+            );
+
             CREATE UNIQUE INDEX IF NOT EXISTS idx_weaknesses_session_tag
                 ON weaknesses (session_id, weakness);
 
@@ -66,3 +80,21 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_quiz_results_session_concept
                 ON quiz_results (session_id, concept);
         """)
+
+        # trade_history 신규 KPI 컬럼 (마이그레이션)
+        for col_ddl in [
+            "ALTER TABLE trade_history ADD COLUMN avg_return_rate FLOAT",
+            "ALTER TABLE trade_history ADD COLUMN expected_value  FLOAT",
+            "ALTER TABLE trade_history ADD COLUMN loss_consistency FLOAT",
+            "ALTER TABLE trade_history ADD COLUMN last_fetched_at TEXT",
+        ]:
+            try:
+                conn.execute(col_ddl)
+            except Exception:
+                pass
+
+        # weaknesses category 컬럼
+        try:
+            conn.execute("ALTER TABLE weaknesses ADD COLUMN category TEXT DEFAULT 'ict'")
+        except Exception:
+            pass
