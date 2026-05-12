@@ -40,15 +40,52 @@ _WEAKNESS_RULES = [
 ]
 
 
+def _bybit_trades_to_text(raw_trades: list[dict]) -> str:
+    """Bybit 체결 목록을 LLM 분석용 텍스트로 변환."""
+    lines = ["date,result,rr,setup,closed_pnl"]
+    for t in raw_trades:
+        try:
+            pnl = float(t.get("closedPnl", "0"))
+        except (ValueError, TypeError):
+            pnl = 0.0
+        if pnl == 0.0:
+            continue
+        result = "win" if pnl > 0 else "loss"
+        try:
+            import pandas as _pd
+            date_str = _pd.to_datetime(int(t.get("execTime", "0")), unit="ms").strftime("%Y-%m-%d")
+        except Exception:
+            date_str = ""
+        try:
+            fee = float(t.get("execFee", "0"))
+            rr = round(abs(pnl) / fee, 2) if fee != 0 else 0.0
+        except (ValueError, TypeError, ZeroDivisionError):
+            rr = 0.0
+        symbol = t.get("symbol", "")
+        setup = symbol.replace("USDT", "").replace("PERP", "").strip()
+        lines.append(f"{date_str},{result},{rr},{setup},{pnl}")
+    return "\n".join(lines)
+
+
 def journal_analysis_node(state: dict) -> dict:
-    """CSV 파싱 + OpenAI로 트레이드 통계 산출."""
+    """CSV 또는 Bybit JSON 파싱 + OpenAI로 트레이드 통계 산출."""
     session_id = state.get("session_id", "default")
     logger.info("journal_analysis_node start | session_id=%s", session_id)
-    journal_data = state.get("journal_data", "")
+
+    raw_trades: list[dict] = state.get("raw_trades", [])
+    journal_data: str = state.get("journal_data", "")
+
+    if raw_trades:
+        content = _bybit_trades_to_text(raw_trades)
+        logger.info("journal_analysis_node: using raw_trades (%d records) | session_id=%s", len(raw_trades), session_id)
+    else:
+        content = journal_data
+        logger.info("journal_analysis_node: using journal_data (CSV) | session_id=%s", session_id)
+
     try:
         msg = _get_llm().invoke([
             SystemMessage(content=_ANALYSIS_SYSTEM),
-            HumanMessage(content=f"Trading journal:\n{journal_data}"),
+            HumanMessage(content=f"Trading journal:\n{content}"),
         ])
         stats = json.loads(msg.content)
     except Exception as e:
