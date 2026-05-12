@@ -23,6 +23,11 @@ def new_data_check_node(state: dict) -> dict:
         logger.info("new_data_check_node: journal mode, skip bybit | session_id=%s", session_id)
         return {"has_new_data": False}
 
+    api_key = os.getenv("BYBIT_API_KEY", "")
+    if not api_key:
+        logger.info("new_data_check_node: sample mode → has_new_data=True | session_id=%s", session_id)
+        return {"has_new_data": True}
+
     last_fetched_at = state.get("last_fetched_at", "")
     if not last_fetched_at:
         logger.info("new_data_check_node: first run, has_new_data=True | session_id=%s", session_id)
