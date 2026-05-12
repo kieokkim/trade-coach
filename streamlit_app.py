@@ -17,19 +17,18 @@ if "last_stats" not in st.session_state:
         with get_db() as conn:
             row = conn.execute(
                 """SELECT win_rate, avg_return_rate, expected_value,
-                          loss_consistency, action_rule
+                          loss_consistency
                    FROM trade_history
                    WHERE session_id=? ORDER BY date DESC LIMIT 1""",
                 (_sid,),
             ).fetchone()
         if row:
             st.session_state["last_stats"] = {
-                "win_rate":        row["win_rate"] or 0.0,
-                "avg_return_rate": row["avg_return_rate"] or 0.0,
-                "expected_value":  row["expected_value"] or 0.0,
+                "win_rate":         row["win_rate"] or 0.0,
+                "avg_return_rate":  row["avg_return_rate"] or 0.0,
+                "expected_value":   row["expected_value"] or 0.0,
                 "loss_consistency": row["loss_consistency"] or 0.0,
             }
-            st.session_state["last_action_rule"] = row["action_rule"] or ""
     except Exception:
         pass
 
