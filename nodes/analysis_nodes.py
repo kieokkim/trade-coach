@@ -4,7 +4,13 @@ import logging
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from config import WIN_RATE_THRESHOLD, AVG_RR_THRESHOLD, MAX_DRAWDOWN_THRESHOLD
+from config import (
+    WIN_RATE_THRESHOLD,
+    MAX_DRAWDOWN_THRESHOLD,
+    AVG_RETURN_RATE_THRESHOLD,
+    EXPECTED_VALUE_THRESHOLD,
+    LOSS_CONSISTENCY_THRESHOLD,
+)
 from tools.concept_tool import search_ict_concept, CONCEPT_NOT_FOUND_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -22,27 +28,39 @@ def _get_llm() -> ChatOpenAI:
         )
     return _llm
 
+
 _ANALYSIS_SYSTEM = """\
 You are a trading journal analyzer. Parse the trading journal and return JSON with exactly these keys:
-  win_rate:      float 0.0-1.0  (winning trades / total trades)
-  avg_rr:        float          (average risk:reward ratio; 0.0 if column absent)
-  max_drawdown:  int            (maximum consecutive losing trades)
-  best_setup:    str            (setup/pattern name with highest win rate; "" if unavailable)
-  worst_setup:   str            (setup/pattern name with lowest win rate; "" if unavailable)
-  trade_count:   int            (total number of trades parsed)
-  setup_analysis: object       (per-setup win rate dict, e.g. {"FVG": 0.33, "OB": 0.5}; {} if setup column absent)
-  action_rule:   str            (one concrete rule to apply tomorrow, in Korean, as a prohibition or requirement; e.g. "OB 셋업은 BOS 확인 후에만 진입할 것")"""
+
+  win_rate:         float 0.0-1.0  (winning trades / total trades)
+  avg_return_rate:  float          (average return rate %; mean of closed_pnl/exec_value*100 per trade; 0.0 if exec_value absent)
+  expected_value:   float          (win_rate × avg_win_return% − (1−win_rate) × avg_loss_return%; where avg_loss_return% is mean of abs(return%) for losing trades)
+  loss_consistency: float          (std(loss_returns%) / mean(abs(loss_returns%)); 0.0 if fewer than 2 losses; lower = more disciplined stops)
+  max_drawdown:     int            (maximum consecutive losing trades)
+  best_setup:       str            (setup name with highest avg_return_rate; "" if unavailable)
+  worst_setup:      str            (setup name with lowest avg_return_rate; "" if unavailable)
+  trade_count:      int            (total number of trades parsed)
+  setup_analysis:   object         (per-setup avg_return_rate dict, e.g. {"FVG": 1.2, "OB": -0.5}; {} if setup column absent)
+  action_rule:      str            (one concrete rule to apply tomorrow, in Korean, as a prohibition or requirement)
+
+Calculation rules:
+- avg_return_rate: mean(closed_pnl / exec_value * 100). If exec_value column is absent or 0, use 0.0.
+- expected_value: (win_rate * avg_win_return%) - ((1 - win_rate) * avg_loss_return%)
+- loss_consistency: std(loss_return_values) / mean(abs(loss_return_values)). Return 0.0 if < 2 losses.
+- setup_analysis values must be avg_return_rate per setup, not win_rate."""
 
 _WEAKNESS_RULES = [
-    ("win_rate",     lambda v: v < WIN_RATE_THRESHOLD,     "승률_낮음"),
-    ("avg_rr",       lambda v: v < AVG_RR_THRESHOLD,       "손익비_부족"),
-    ("max_drawdown", lambda v: v >= MAX_DRAWDOWN_THRESHOLD, "연속손실_패턴"),
+    ("win_rate",         lambda v: v < WIN_RATE_THRESHOLD,            "승률_낮음"),
+    ("avg_return_rate",  lambda v: v < AVG_RETURN_RATE_THRESHOLD,     "수익률_낮음"),
+    ("expected_value",   lambda v: v < EXPECTED_VALUE_THRESHOLD,      "기대값_음수"),
+    ("loss_consistency", lambda v: v > LOSS_CONSISTENCY_THRESHOLD,    "손절_불규칙"),
+    ("max_drawdown",     lambda v: v >= MAX_DRAWDOWN_THRESHOLD,       "연속손실_패턴"),
 ]
 
 
 def _bybit_trades_to_text(raw_trades: list[dict]) -> str:
     """Bybit 체결 목록을 LLM 분석용 텍스트로 변환."""
-    lines = ["date,result,rr,setup,closed_pnl"]
+    lines = ["date,result,setup,closed_pnl,exec_value"]
     for t in raw_trades:
         try:
             pnl = float(t.get("closedPnl", "0"))
@@ -57,13 +75,12 @@ def _bybit_trades_to_text(raw_trades: list[dict]) -> str:
         except Exception:
             date_str = ""
         try:
-            fee = float(t.get("execFee", "0"))
-            rr = round(abs(pnl) / fee, 2) if fee != 0 else 0.0
-        except (ValueError, TypeError, ZeroDivisionError):
-            rr = 0.0
+            exec_value = float(t.get("execValue", "0"))
+        except (ValueError, TypeError):
+            exec_value = 0.0
         symbol = t.get("symbol", "")
         setup = symbol.replace("USDT", "").replace("PERP", "").strip()
-        lines.append(f"{date_str},{result},{rr},{setup},{pnl}")
+        lines.append(f"{date_str},{result},{setup},{pnl},{exec_value}")
     return "\n".join(lines)
 
 

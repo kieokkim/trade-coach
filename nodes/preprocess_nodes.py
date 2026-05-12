@@ -89,12 +89,11 @@ def _preprocess_bybit(raw_trades: list[dict], session_id: str) -> dict:
             logger.warning("preprocess_node bybit: execTime parse failed: %s", e)
             date_str = ""
 
-        exec_fee_str = trade.get("execFee", "0")
+        exec_value_str = trade.get("execValue", "0")
         try:
-            exec_fee = float(exec_fee_str)
-            rr = round(abs(closed_pnl) / exec_fee, 2) if exec_fee != 0 else 0.0
-        except (ValueError, TypeError, ZeroDivisionError):
-            rr = 0.0
+            exec_value = float(exec_value_str)
+        except (ValueError, TypeError):
+            exec_value = 0.0
 
         symbol = trade.get("symbol", "")
         setup = symbol.replace("USDT", "").replace("PERP", "").strip()
@@ -107,11 +106,12 @@ def _preprocess_bybit(raw_trades: list[dict], session_id: str) -> dict:
         rows.append({
             "date": date_str,
             "result": result,
-            "rr": rr,
+            "rr": 0.0,
             "setup": setup,
             "entry_price": entry_price,
             "exit_price": exit_price,
             "closed_pnl": closed_pnl,
+            "exec_value": exec_value,
         })
 
     if not rows:
