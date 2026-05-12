@@ -44,9 +44,9 @@ with st.sidebar:
 
     api_key = os.getenv("BYBIT_API_KEY", "")
     if api_key:
-        st.success("Bybit API 키 감지됨")
+        st.sidebar.success("🔗 Bybit API 연결됨")
     else:
-        st.caption("Bybit API 키 미설정 (샘플 데이터 사용)")
+        st.sidebar.info("📂 샘플 데이터 모드")
 
     if st.button("▶ Bybit 분석 시작", type="primary", key="run_bybit"):
         with st.spinner("Bybit 데이터 수집 및 분석 중..."):
@@ -129,7 +129,9 @@ with tab1:
         st.session_state["last_coaching"]    = result.get("coaching_output", "")
 
     # 결과는 session_state에서 표시 (새로고침 후에도 유지)
-    if "last_stats" in st.session_state:
+    if "last_stats" not in st.session_state:
+        st.info("👆 사이드바에서 분석 시작 버튼을 눌러주세요")
+    else:
         stats = st.session_state["last_stats"]
 
         st.subheader("📌 핵심 지표")
