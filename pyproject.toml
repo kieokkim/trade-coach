@@ -13,6 +13,7 @@ dependencies = [
     "pandas>=3.0.2",
     "python-dotenv==1.1.1",
     "requests>=2.33.1",
+    "streamlit>=1.57.0",
 ]
 
 [dependency-groups]
