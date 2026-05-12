@@ -10,6 +10,7 @@ from nodes.coaching_nodes import backtest_coach_node, fallback_classify_node
 from nodes.fetch_nodes import new_data_check_node, bybit_fetch_node
 from nodes.journal_nodes import journal_write_node
 from nodes.memory_nodes import memory_save_node
+from nodes.quiz_nodes import quiz_generate_node
 from nodes.performance_nodes import performance_analysis_node
 from nodes.preprocess_nodes import preprocess_node
 
@@ -45,7 +46,6 @@ class TradeCoachState(TypedDict, total=False):
     has_new_data:    bool         # 새 체결 데이터 존재 여부
     raw_trades:      list         # Bybit API 원본 체결 목록
     journal_entries: list         # 거래별 매매일지
-    needs_user_input: bool        # 진입/청산 근거 입력 필요 여부
     performance_summary: dict     # 성과 요약 KPI
     coaching_output: str          # ICT 코칭 결과 텍스트
     fallback_type:   str          # 'ict' | 'psychology' | 'pattern' | ''
@@ -78,7 +78,6 @@ DEFAULT_STATE: TradeCoachState = {
     "has_new_data":      False,
     "raw_trades":        [],
     "journal_entries":   [],
-    "needs_user_input":  False,
     "performance_summary": {},
     "coaching_output":   "",
     "fallback_type":     "",
@@ -176,6 +175,7 @@ def _build_graph() -> StateGraph:
     builder.add_node("weakness_detect",      weakness_detect_node)
     builder.add_node("fallback_classify",    fallback_classify_node)
     builder.add_node("backtest_coach",       backtest_coach_node)
+    builder.add_node("quiz_generate",        quiz_generate_node)
     builder.add_node("memory_save",          memory_save_node)
 
     builder.add_edge(START, "memory_load")
@@ -200,7 +200,8 @@ def _build_graph() -> StateGraph:
         route_after_fallback,
         {"backtest_coach": "backtest_coach"},
     )
-    builder.add_edge("backtest_coach", "memory_save")
+    builder.add_edge("backtest_coach", "quiz_generate")
+    builder.add_edge("quiz_generate",  "memory_save")
     builder.add_edge("memory_save", END)
 
     return builder.compile()

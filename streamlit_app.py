@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from graph import DEFAULT_STATE, graph
+from nodes.quiz_nodes import evaluate_quiz
 
 st.set_page_config(page_title="TradeCoach", page_icon="📊", layout="wide")
 
@@ -32,6 +33,23 @@ if "last_stats" not in st.session_state:
     except Exception:
         pass
 
+
+def _save_result(result: dict) -> None:
+    """graph.invoke 반환값을 session_state에 저장."""
+    st.session_state["last_result"]          = result
+    st.session_state["last_stats"]           = result.get("stats", {})
+    st.session_state["last_weaknesses"]      = result.get("weaknesses", [])
+    st.session_state["last_action_rule"]     = result.get("action_rule", "")
+    st.session_state["last_setup"]           = result.get("setup_analysis", {})
+    st.session_state["last_coaching"]        = result.get("coaching_output", "")
+    st.session_state["last_journal_entries"] = result.get("journal_entries", [])
+    st.session_state["last_quiz_question"]   = result.get("quiz_question", "")
+    st.session_state["last_quiz_concept"]    = result.get("current_concept", "")
+    # 새 분석 시작 시 이전 퀴즈 결과 초기화
+    st.session_state.pop("last_quiz_result",   None)
+    st.session_state.pop("last_quiz_feedback", None)
+
+
 # ──────────────────────────────── 사이드바 ─────────────────────────────────
 
 with st.sidebar:
@@ -57,20 +75,13 @@ with st.sidebar:
                 "raw_trades":  [],
             }
             result = graph.invoke(state)
-        st.session_state["last_result"]     = result
-        st.session_state["last_stats"]      = result.get("stats", {})
-        st.session_state["last_weaknesses"] = result.get("weaknesses", [])
-        st.session_state["last_action_rule"] = result.get("action_rule", "")
-        st.session_state["last_setup"]      = result.get("setup_analysis", {})
-        st.session_state["last_coaching"]   = result.get("coaching_output", "")
+        _save_result(result)
 
-    # 사이드바 분석 결과 미리보기
     if "last_action_rule" in st.session_state and st.session_state["last_action_rule"]:
         st.success(st.session_state["last_action_rule"])
 
     st.divider()
 
-    # 마지막 세션 요약
     if "last_result" in st.session_state:
         res = st.session_state["last_result"]
         st.subheader("📋 마지막 세션 요약")
@@ -120,14 +131,9 @@ with tab1:
                 "raw_trades":   [],
             }
             result = graph.invoke(state)
-        st.session_state["last_result"]      = result
-        st.session_state["last_stats"]       = result.get("stats", {})
-        st.session_state["last_weaknesses"]  = result.get("weaknesses", [])
-        st.session_state["last_action_rule"] = result.get("action_rule", "")
-        st.session_state["last_setup"]       = result.get("setup_analysis", {})
-        st.session_state["last_coaching"]    = result.get("coaching_output", "")
+        _save_result(result)
 
-    # 결과는 session_state에서 표시 (새로고침 후에도 유지)
+    # ── 결과 표시 (session_state 기반, 새로고침 후에도 유지) ──
     if "last_stats" not in st.session_state:
         st.info("👆 사이드바에서 분석 시작 버튼을 눌러주세요")
     else:
@@ -154,16 +160,74 @@ with tab1:
         setup_analysis = st.session_state.get("last_setup", {})
         if setup_analysis:
             st.subheader("📈 셋업별 수익률")
-            df = pd.DataFrame(
+            df_setup = pd.DataFrame(
                 list(setup_analysis.items()),
                 columns=["셋업", "평균 수익률 (%)"],
             ).set_index("셋업")
-            st.bar_chart(df)
+            st.bar_chart(df_setup)
 
         coaching = st.session_state.get("last_coaching", "")
         if coaching:
             st.subheader("💬 코칭 피드백")
             st.write(coaching)
+
+        # ── 매매일지 ──
+        journal_entries = st.session_state.get("last_journal_entries", [])
+        if journal_entries:
+            st.subheader("📒 매매일지")
+            for entry in journal_entries:
+                label = (
+                    f"{entry.get('date', '')} | "
+                    f"{entry.get('symbol', '')} | "
+                    f"{'✅ 승' if entry.get('result') == 'win' else '❌ 패'}"
+                )
+                with st.expander(label):
+                    st.write(f"**진입 근거**: {entry.get('entry_reason', '') or '추론 불가'}")
+                    st.write(f"**청산 근거**: {entry.get('exit_reason', '') or '추론 불가'}")
+                    st.write(f"**회고**: {entry.get('reflection', '') or '-'}")
+
+        # ── 퀴즈 (코칭 직후) ──
+        quiz_question = st.session_state.get("last_quiz_question", "")
+        if quiz_question:
+            st.divider()
+            st.subheader("🧠 개념 확인 퀴즈")
+            st.write(f"**{quiz_question}**")
+
+            quiz_result = st.session_state.get("last_quiz_result", "")
+
+            if not quiz_result:
+                quiz_answer = st.text_input(
+                    "답변을 입력하세요",
+                    key="quiz_answer_input",
+                    placeholder="자유롭게 답변해주세요",
+                )
+                if st.button("📝 답변 제출", key="submit_quiz"):
+                    if quiz_answer.strip():
+                        with st.spinner("답변 평가 중..."):
+                            result, feedback = evaluate_quiz(
+                                session_id=session_id,
+                                quiz_question=quiz_question,
+                                quiz_answer=quiz_answer,
+                                current_concept=st.session_state.get("last_quiz_concept", ""),
+                                retry_count=st.session_state.get("quiz_retry_count", 0),
+                            )
+                        st.session_state["last_quiz_result"]   = result
+                        st.session_state["last_quiz_feedback"] = feedback
+                        st.rerun()
+                    else:
+                        st.warning("답변을 입력해주세요.")
+            else:
+                feedback = st.session_state.get("last_quiz_feedback", "")
+                if quiz_result == "pass":
+                    st.success(f"✅ 정답! {feedback}")
+                else:
+                    st.error(f"❌ 다시 생각해보세요. {feedback}")
+                    if st.button("🔄 다시 시도", key="retry_quiz"):
+                        retry = st.session_state.get("quiz_retry_count", 0) + 1
+                        st.session_state["quiz_retry_count"] = retry
+                        st.session_state.pop("last_quiz_result",   None)
+                        st.session_state.pop("last_quiz_feedback", None)
+                        st.rerun()
 
 # ══════════════════════════ Tab 2: 차트 분석 ═══════════════════════════════
 
@@ -207,7 +271,6 @@ with tab3:
     else:
         res = st.session_state["last_result"]
 
-        # improvement_log
         improvement_log = res.get("improvement_log", [])
         st.subheader("📅 세션별 개선 이력")
         if improvement_log:
@@ -216,7 +279,6 @@ with tab3:
         else:
             st.caption("저장된 이력 없음 (첫 세션이거나 memory_save 미실행)")
 
-        # performance_summary
         performance_summary = res.get("performance_summary", {})
         st.subheader("📊 성과 요약 (현재 세션)")
         if performance_summary:

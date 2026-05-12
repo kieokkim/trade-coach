@@ -23,8 +23,9 @@ _COACH_SYSTEM = """\
 1. 1순위 약점이 실제 매매에서 어떻게 나타났는지 구체적으로 언급
 2. 관련 ICT 개념을 실전에 적용하는 백테스트 전략 1가지 제시
 3. 내일 당장 실행할 수 있는 구체적 규칙 1~2개 제시
+4. 추가 약점이 있으면 각 1문장씩 간략히 언급
 
-응답은 200자 이내의 평문(plain text)으로 작성하세요."""
+응답은 300자 이내의 평문(plain text)으로 작성하세요."""
 
 _coach_llm: ChatOpenAI | None = None
 
@@ -54,7 +55,9 @@ def backtest_coach_node(state: dict) -> dict:
     context_parts: list[str] = []
     if performance_summary:
         context_parts.append(f"성과 요약: {json.dumps(performance_summary, ensure_ascii=False)}")
-    context_parts.append(f"약점 목록: {', '.join(weaknesses)}")
+    context_parts.append(f"1순위 약점: {primary_weakness}")
+    if len(weaknesses) > 1:
+        context_parts.append(f"추가 약점: {', '.join(weaknesses[1:])}")
     if concept_info:
         context_parts.append(f"개념 설명:\n{concept_info}")
 

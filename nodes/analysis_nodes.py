@@ -1,7 +1,8 @@
-import json
+import io
 import logging
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+import pandas as pd
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from config import (
@@ -11,121 +12,183 @@ from config import (
     EXPECTED_VALUE_THRESHOLD,
     LOSS_CONSISTENCY_THRESHOLD,
 )
+from db import get_db
 from tools.concept_tool import search_ict_concept, CONCEPT_NOT_FOUND_PREFIX
 
 logger = logging.getLogger(__name__)
 
 _llm: ChatOpenAI | None = None
 
+_ACTION_RULE_SYSTEM = """\
+당신은 트레이딩 코치입니다. 트레이더의 성과 지표를 보고 내일 당장 실행할 구체적인 규칙을 한국어로 한 문장 작성하세요.
+금지 또는 의무 형식으로 작성하세요. 예: "OB 셋업에서 반드시 손절을 지정하세요" 또는 "FVG 셋업 외에는 진입하지 마세요".
+규칙 문장 하나만 출력하세요."""
+
+_WEAKNESS_RULES = [
+    ("win_rate",         lambda v: v < WIN_RATE_THRESHOLD,         "승률_낮음"),
+    ("avg_return_rate",  lambda v: v < AVG_RETURN_RATE_THRESHOLD,  "수익률_낮음"),
+    ("expected_value",   lambda v: v < EXPECTED_VALUE_THRESHOLD,   "기대값_음수"),
+    ("loss_consistency", lambda v: v > LOSS_CONSISTENCY_THRESHOLD, "손절_불규칙"),
+    ("max_drawdown",     lambda v: v >= MAX_DRAWDOWN_THRESHOLD,    "연속손실_패턴"),
+]
+
 
 def _get_llm() -> ChatOpenAI:
     global _llm
     if _llm is None:
-        _llm = ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0,
-            model_kwargs={"response_format": {"type": "json_object"}},
-        )
+        _llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
     return _llm
 
 
-_ANALYSIS_SYSTEM = """\
-You are a trading journal analyzer. Parse the trading journal and return JSON with exactly these keys:
+# ─────────────────────────── pandas 통계 계산 ──────────────────────────────
 
-  win_rate:         float 0.0-1.0  (winning trades / total trades)
-  avg_return_rate:  float          (average return rate %; mean of closed_pnl/exec_value*100 per trade; 0.0 if exec_value absent)
-  expected_value:   float          (win_rate × avg_win_return% − (1−win_rate) × avg_loss_return%; where avg_loss_return% is mean of abs(return%) for losing trades)
-  loss_consistency: float          (std(loss_returns%) / mean(abs(loss_returns%)); 0.0 if fewer than 2 losses; lower = more disciplined stops)
-  max_drawdown:     int            (maximum consecutive losing trades)
-  best_setup:       str            (setup name with highest avg_return_rate; "" if unavailable)
-  worst_setup:      str            (setup name with lowest avg_return_rate; "" if unavailable)
-  trade_count:      int            (total number of trades parsed)
-  setup_analysis:   object         (per-setup avg_return_rate dict, e.g. {"FVG": 1.2, "OB": -0.5}; {} if setup column absent)
-  action_rule:      str            (one concrete rule to apply tomorrow, in Korean, as a prohibition or requirement)
-
-Calculation rules:
-- avg_return_rate: mean(closed_pnl / exec_value * 100). If exec_value column is absent or 0, use 0.0.
-- expected_value: (win_rate * avg_win_return%) - ((1 - win_rate) * avg_loss_return%)
-- loss_consistency: std(loss_return_values) / mean(abs(loss_return_values)). Return 0.0 if < 2 losses.
-- setup_analysis values must be avg_return_rate per setup, not win_rate."""
-
-_WEAKNESS_RULES = [
-    ("win_rate",         lambda v: v < WIN_RATE_THRESHOLD,            "승률_낮음"),
-    ("avg_return_rate",  lambda v: v < AVG_RETURN_RATE_THRESHOLD,     "수익률_낮음"),
-    ("expected_value",   lambda v: v < EXPECTED_VALUE_THRESHOLD,      "기대값_음수"),
-    ("loss_consistency", lambda v: v > LOSS_CONSISTENCY_THRESHOLD,    "손절_불규칙"),
-    ("max_drawdown",     lambda v: v >= MAX_DRAWDOWN_THRESHOLD,       "연속손실_패턴"),
-]
-
-
-def _bybit_trades_to_text(raw_trades: list[dict]) -> str:
-    """Bybit 체결 목록을 LLM 분석용 텍스트로 변환."""
-    lines = ["date,result,setup,closed_pnl,exec_value"]
-    for t in raw_trades:
-        try:
-            pnl = float(t.get("closedPnl", "0"))
-        except (ValueError, TypeError):
-            pnl = 0.0
-        if pnl == 0.0:
-            continue
-        result = "win" if pnl > 0 else "loss"
-        try:
-            import pandas as _pd
-            date_str = _pd.to_datetime(int(t.get("execTime", "0")), unit="ms").strftime("%Y-%m-%d")
-        except Exception:
-            date_str = ""
-        try:
-            exec_value = float(t.get("execValue", "0"))
-        except (ValueError, TypeError):
-            exec_value = 0.0
-        symbol = t.get("symbol", "")
-        setup = symbol.replace("USDT", "").replace("PERP", "").strip()
-        lines.append(f"{date_str},{result},{setup},{pnl},{exec_value}")
-    return "\n".join(lines)
-
-
-def journal_analysis_node(state: dict) -> dict:
-    """CSV 또는 Bybit JSON 파싱 + OpenAI로 트레이드 통계 산출."""
-    session_id = state.get("session_id", "default")
-    logger.info("journal_analysis_node start | session_id=%s", session_id)
-
-    raw_trades: list[dict] = state.get("raw_trades", [])
-    journal_data: str = state.get("journal_data", "")
-
-    if raw_trades:
-        content = _bybit_trades_to_text(raw_trades)
-        logger.info("journal_analysis_node: using raw_trades (%d records) | session_id=%s", len(raw_trades), session_id)
-    else:
-        content = journal_data
-        logger.info("journal_analysis_node: using journal_data (CSV) | session_id=%s", session_id)
-
+def _compute_stats(journal_data: str) -> dict:
     try:
-        msg = _get_llm().invoke([
-            SystemMessage(content=_ANALYSIS_SYSTEM),
-            HumanMessage(content=f"Trading journal:\n{content}"),
-        ])
-        stats = json.loads(msg.content)
+        df = pd.read_csv(io.StringIO(journal_data))
     except Exception as e:
-        logger.warning("journal_analysis_node LLM error: %s", e)
-        stats = {"error": str(e)}
-    logger.info("journal_analysis_node end | session_id=%s stats_keys=%s", session_id, list(stats.keys()))
+        logger.warning("_compute_stats: CSV parse failed: %s", e)
+        return {"error": str(e)}
+
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    if df.empty:
+        return {"error": "empty dataframe"}
+
+    df["result"] = df["result"].astype(str).str.strip().str.lower()
+    total = len(df)
+    win_mask = df["result"] == "win"
+    loss_mask = df["result"] == "loss"
+    win_rate = float(win_mask.sum() / total) if total > 0 else 0.0
+
+    # return_rate: closed_pnl/exec_value*100 우선, fallback rr
+    if "closed_pnl" in df.columns and "exec_value" in df.columns:
+        pnl = pd.to_numeric(df["closed_pnl"], errors="coerce").fillna(0.0)
+        ev  = pd.to_numeric(df["exec_value"],  errors="coerce").fillna(0.0)
+        df["return_rate"] = pnl.where(ev == 0, pnl / ev.replace(0, float("nan")) * 100).fillna(0.0)
+    elif "rr" in df.columns:
+        df["return_rate"] = pd.to_numeric(df["rr"], errors="coerce").fillna(0.0)
+    else:
+        df["return_rate"] = 0.0
+
+    avg_return_rate = float(df["return_rate"].mean())
+
+    win_ret  = df.loc[win_mask,  "return_rate"]
+    loss_ret = df.loc[loss_mask, "return_rate"]
+    avg_win      = float(win_ret.mean())       if len(win_ret)  > 0 else 0.0
+    avg_loss_abs = float(loss_ret.abs().mean()) if len(loss_ret) > 0 else 0.0
+    expected_value = win_rate * avg_win - (1 - win_rate) * avg_loss_abs
+
+    if len(loss_ret) >= 2:
+        la = loss_ret.abs()
+        loss_consistency = float(la.std() / la.mean()) if la.mean() != 0 else 0.0
+    else:
+        loss_consistency = 0.0
+
+    # max consecutive losses
+    max_dd = cur_dd = 0
+    for r in df["result"].tolist():
+        if r == "loss":
+            cur_dd += 1
+            max_dd = max(max_dd, cur_dd)
+        else:
+            cur_dd = 0
+
+    setup_analysis: dict = {}
+    best_setup = worst_setup = ""
+    if "setup" in df.columns:
+        df["setup"] = df["setup"].astype(str).str.strip()
+        grp = df.groupby("setup")["return_rate"].mean()
+        setup_analysis = {k: round(float(v), 4) for k, v in grp.items()}
+        if setup_analysis:
+            best_setup  = max(setup_analysis, key=setup_analysis.get)
+            worst_setup = min(setup_analysis, key=setup_analysis.get)
+
     return {
-        "stats":          stats,
-        "setup_analysis": stats.get("setup_analysis", {}),
-        "action_rule":    stats.get("action_rule", ""),
+        "win_rate":         round(win_rate, 4),
+        "avg_return_rate":  round(avg_return_rate, 4),
+        "expected_value":   round(expected_value, 4),
+        "loss_consistency": round(loss_consistency, 4),
+        "max_drawdown":     int(max_dd),
+        "best_setup":       best_setup,
+        "worst_setup":      worst_setup,
+        "trade_count":      total,
+        "setup_analysis":   setup_analysis,
     }
 
 
+def _generate_action_rule(stats: dict) -> str:
+    try:
+        summary = (
+            f"승률: {stats.get('win_rate', 0):.1%}, "
+            f"평균수익률: {stats.get('avg_return_rate', 0):.2f}%, "
+            f"기대값: {stats.get('expected_value', 0):.2f}%, "
+            f"손절일관성: {stats.get('loss_consistency', 0):.2f}, "
+            f"최악셋업: {stats.get('worst_setup', '') or '없음'}"
+        )
+        msg = _get_llm().invoke([
+            SystemMessage(content=_ACTION_RULE_SYSTEM),
+            HumanMessage(content=summary),
+        ])
+        return msg.content.strip()
+    except Exception as e:
+        logger.warning("_generate_action_rule LLM error: %s", e)
+        return ""
+
+
+# ─────────────────────────── 노드 함수 ────────────────────────────────────
+
+def journal_analysis_node(state: dict) -> dict:
+    session_id = state.get("session_id", "default")
+    logger.info("journal_analysis_node start | session_id=%s", session_id)
+
+    journal_data: str = state.get("journal_data", "")
+    if not journal_data.strip():
+        logger.warning("journal_analysis_node: journal_data empty | session_id=%s", session_id)
+        return {"stats": {"error": "no data"}, "setup_analysis": {}, "action_rule": ""}
+
+    stats = _compute_stats(journal_data)
+    action_rule = _generate_action_rule(stats) if "error" not in stats else ""
+
+    logger.info(
+        "journal_analysis_node end | session_id=%s stats_keys=%s",
+        session_id, list(stats.keys()),
+    )
+    return {
+        "stats":          stats,
+        "setup_analysis": stats.get("setup_analysis", {}),
+        "action_rule":    action_rule,
+    }
+
+
+# ─────────────────────── 약점 감지 + DB 우선순위 정렬 ─────────────────────
+
+def _sort_by_recurrence(weaknesses: list[str], session_id: str) -> list[str]:
+    if len(weaknesses) <= 1:
+        return weaknesses
+    try:
+        with get_db() as conn:
+            counts = {}
+            for w in weaknesses:
+                row = conn.execute(
+                    "SELECT count FROM weaknesses WHERE session_id=? AND weakness=?",
+                    (session_id, w),
+                ).fetchone()
+                counts[w] = row["count"] if row else 0
+        return sorted(weaknesses, key=lambda w: counts.get(w, 0), reverse=True)
+    except Exception:
+        return weaknesses
+
+
 def weakness_detect_node(state: dict) -> dict:
-    """stats 임계값 + past_weaknesses 교차 분석으로 weakness 태그 추출."""
     session_id = state.get("session_id", "default")
     logger.info("weakness_detect_node start | session_id=%s", session_id)
+
     stats = state.get("stats", {})
     past  = state.get("past_weaknesses", [])
 
     if "error" in stats:
-        logger.warning("weakness_detect_node: stats contains error, skipping detection")
-        return {"weaknesses": []}
+        logger.warning("weakness_detect_node: stats contains error, skipping")
+        return {"weaknesses": [], "concept_not_found": False}
 
     current: list[str] = []
     for key, check, tag in _WEAKNESS_RULES:
@@ -139,16 +202,16 @@ def weakness_detect_node(state: dict) -> dict:
 
     recurring = [w for w in current if w in past]
     new_ones  = [w for w in current if w not in past]
-    weaknesses = recurring + new_ones
+    weaknesses = _sort_by_recurrence(recurring, session_id) + new_ones
 
-    messages = list(state.get("messages", []))
+    # concept 존재 여부 확인 (fallback 라우팅용)
     concept_not_found = False
     if weaknesses:
         concept_info = search_ict_concept.invoke({"weakness_tag": weaknesses[0]})
-        if concept_info.startswith(CONCEPT_NOT_FOUND_PREFIX):
-            concept_not_found = True
-        else:
-            messages.append(AIMessage(content=concept_info))
+        concept_not_found = concept_info.startswith(CONCEPT_NOT_FOUND_PREFIX)
 
-    logger.info("weakness_detect_node end | session_id=%s weaknesses=%s", session_id, weaknesses)
-    return {"weaknesses": weaknesses, "messages": messages, "concept_not_found": concept_not_found}
+    logger.info(
+        "weakness_detect_node end | session_id=%s weaknesses=%s",
+        session_id, weaknesses,
+    )
+    return {"weaknesses": weaknesses, "concept_not_found": concept_not_found}

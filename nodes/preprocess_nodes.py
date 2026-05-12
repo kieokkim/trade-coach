@@ -5,7 +5,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-_REQUIRED_COLS = {"date", "result", "rr", "setup"}
+_REQUIRED_COLS = {"date", "result"}
 
 
 def preprocess_node(state: dict) -> dict:

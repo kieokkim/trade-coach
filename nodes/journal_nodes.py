@@ -56,12 +56,6 @@ def journal_write_node(state: dict) -> dict:
         logger.warning("journal_write_node: CSV parse failed: %s", e)
         return {"journal_entries": [], "needs_user_input": False}
 
-    has_entry_reason = "entry_reason" in df.columns
-    has_exit_reason = "exit_reason" in df.columns
-    entry_reason_empty = has_entry_reason and df["entry_reason"].astype(str).str.strip().eq("").all()
-    exit_reason_empty = has_exit_reason and df["exit_reason"].astype(str).str.strip().eq("").all()
-    needs_user_input = (not has_entry_reason or entry_reason_empty) or (not has_exit_reason or exit_reason_empty)
-
     try:
         msg = _get_llm().invoke([
             SystemMessage(content=_JOURNAL_SYSTEM),
@@ -73,14 +67,8 @@ def journal_write_node(state: dict) -> dict:
         logger.warning("journal_write_node LLM error: %s", e)
         entries = []
 
-    if needs_user_input:
-        logger.info(
-            "journal_write_node: entry/exit reasons missing, needs_user_input=True | session_id=%s",
-            session_id,
-        )
-
     logger.info(
-        "journal_write_node end | session_id=%s entries=%d needs_user_input=%s",
-        session_id, len(entries), needs_user_input,
+        "journal_write_node end | session_id=%s entries=%d",
+        session_id, len(entries),
     )
-    return {"journal_entries": entries, "needs_user_input": needs_user_input}
+    return {"journal_entries": entries}
