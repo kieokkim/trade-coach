@@ -8,6 +8,31 @@ from graph import DEFAULT_STATE, graph
 
 st.set_page_config(page_title="TradeCoach", page_icon="📊", layout="wide")
 
+# ──────────────────── 앱 시작 시 DB에서 이전 결과 복원 ─────────────────────
+
+if "last_stats" not in st.session_state:
+    try:
+        from db import get_db
+        _sid = st.session_state.get("session_id", "default")
+        with get_db() as conn:
+            row = conn.execute(
+                """SELECT win_rate, avg_return_rate, expected_value,
+                          loss_consistency, action_rule
+                   FROM trade_history
+                   WHERE session_id=? ORDER BY date DESC LIMIT 1""",
+                (_sid,),
+            ).fetchone()
+        if row:
+            st.session_state["last_stats"] = {
+                "win_rate":        row["win_rate"] or 0.0,
+                "avg_return_rate": row["avg_return_rate"] or 0.0,
+                "expected_value":  row["expected_value"] or 0.0,
+                "loss_consistency": row["loss_consistency"] or 0.0,
+            }
+            st.session_state["last_action_rule"] = row["action_rule"] or ""
+    except Exception:
+        pass
+
 # ──────────────────────────────── 사이드바 ─────────────────────────────────
 
 with st.sidebar:
@@ -27,23 +52,22 @@ with st.sidebar:
         with st.spinner("Bybit 데이터 수집 및 분석 중..."):
             state = {
                 **DEFAULT_STATE,
-                "session_id": session_id,
-                "input_type": "bybit",
+                "session_id":  session_id,
+                "input_type":  "bybit",
                 "journal_data": "",
-                "raw_trades": [],
+                "raw_trades":  [],
             }
             result = graph.invoke(state)
-        st.session_state["last_result"] = result
-        coaching = result.get("coaching_output", "")
-        if coaching:
-            st.subheader("💬 코칭 결과")
-            st.write(coaching)
-        else:
-            action_rule = result.get("action_rule", "")
-            if action_rule:
-                st.success(action_rule)
-            else:
-                st.info("분석 완료 (Tab 3에서 성과 기록 확인)")
+        st.session_state["last_result"]     = result
+        st.session_state["last_stats"]      = result.get("stats", {})
+        st.session_state["last_weaknesses"] = result.get("weaknesses", [])
+        st.session_state["last_action_rule"] = result.get("action_rule", "")
+        st.session_state["last_setup"]      = result.get("setup_analysis", {})
+        st.session_state["last_coaching"]   = result.get("coaching_output", "")
+
+    # 사이드바 분석 결과 미리보기
+    if "last_action_rule" in st.session_state and st.session_state["last_action_rule"]:
+        st.success(st.session_state["last_action_rule"])
 
     st.divider()
 
@@ -97,11 +121,17 @@ with tab1:
                 "raw_trades":   [],
             }
             result = graph.invoke(state)
+        st.session_state["last_result"]      = result
+        st.session_state["last_stats"]       = result.get("stats", {})
+        st.session_state["last_weaknesses"]  = result.get("weaknesses", [])
+        st.session_state["last_action_rule"] = result.get("action_rule", "")
+        st.session_state["last_setup"]       = result.get("setup_analysis", {})
+        st.session_state["last_coaching"]    = result.get("coaching_output", "")
 
-        st.session_state["last_result"] = result
-        stats = result.get("stats", {})
+    # 결과는 session_state에서 표시 (새로고침 후에도 유지)
+    if "last_stats" in st.session_state:
+        stats = st.session_state["last_stats"]
 
-        # KPI 메트릭
         st.subheader("📌 핵심 지표")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("승률",       f"{stats.get('win_rate', 0):.1%}")
@@ -109,21 +139,18 @@ with tab1:
         c3.metric("기대값",      f"{stats.get('expected_value', 0):.2f}%")
         c4.metric("손절 일관성", f"{stats.get('loss_consistency', 0):.2f}")
 
-        # 약점 태그
-        weaknesses = result.get("weaknesses", [])
+        weaknesses = st.session_state.get("last_weaknesses", [])
         if weaknesses:
             st.subheader("⚠️ 감지된 약점")
             for w in weaknesses:
                 st.info(w)
 
-        # action_rule
-        action_rule = result.get("action_rule", "")
+        action_rule = st.session_state.get("last_action_rule", "")
         if action_rule:
             st.subheader("★ 내일의 규칙")
             st.success(action_rule)
 
-        # 셋업별 수익률
-        setup_analysis = result.get("setup_analysis", {})
+        setup_analysis = st.session_state.get("last_setup", {})
         if setup_analysis:
             st.subheader("📈 셋업별 수익률")
             df = pd.DataFrame(
@@ -132,8 +159,7 @@ with tab1:
             ).set_index("셋업")
             st.bar_chart(df)
 
-        # 코칭 출력
-        coaching = result.get("coaching_output", "")
+        coaching = st.session_state.get("last_coaching", "")
         if coaching:
             st.subheader("💬 코칭 피드백")
             st.write(coaching)
