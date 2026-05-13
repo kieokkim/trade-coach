@@ -31,11 +31,10 @@ streamlit run streamlit_app.py
 ## 프로젝트 구조
 ```
 trade-coach/
-├── graph.py
-├── state.py
+├── graph.py          # TradeCoachState + 그래프 정의
 ├── config.py
 ├── db.py
-├── nodes/
+├── nodes/            # 각 노드 구현 (.py)
 ├── tools/
 ├── data/
 ├── streamlit_app.py
@@ -72,7 +71,7 @@ TradeCoach는 단순 성과 분석기를 넘어
 | TRADECOACH_AGENT_OVERVIEW.md | 서비스 상세 소개 | 기능 파악 원하는 사람 |
 | FUTURE_ROADMAP.md | v2.1~v3 개발 계획 | 기여자/개발자 |
 | NEXT_BRANCH_PLAN.md | 브랜치 전략 | 개발자 |
-| docs/01_LangGraph_상세_노드_설계서_v2.1.docx | 노드 설계 명세 | 개발자 |
+| docs/01_LangGraph_상세_노드_설계서_v2.0.docx | 노드 설계 명세 | 개발자 |
 | docs/04_MVP_API_명세서_v2.1.docx | API/State 명세 | 개발자 |
 | docs/05_MVP_DB_스키마_설계서_v2.1.docx | DB 스키마 | 개발자 |
 | docs/06_배포후_최소회귀_테스트_체크리스트_v0.3.docx | 배포 체크리스트 | 운영자 |
