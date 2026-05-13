@@ -12,5 +12,11 @@ wheels/
 
 tradecoach.db
 
+# Jupyter
+.ipynb_checkpoints/
+
 # macOS
 .DS_Store
+
+# IDE / workspace
+*.code-workspace
