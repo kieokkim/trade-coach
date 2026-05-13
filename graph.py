@@ -146,8 +146,8 @@ def route_after_input(state: TradeCoachState) -> str:
     return state["input_type"]
 
 
-def route_new_data(state: TradeCoachState) -> bool:
-    return state.get("has_new_data", False)
+def route_new_data(state: TradeCoachState) -> str:
+    return "has_new" if state.get("has_new_data", False) else "no_new"
 
 
 def route_after_weakness(state: TradeCoachState) -> str:
@@ -183,7 +183,7 @@ def _build_graph() -> StateGraph:
     builder.add_conditional_edges(
         "new_data_check",
         route_new_data,
-        {True: "bybit_fetch", False: END},
+        {"has_new": "bybit_fetch", "no_new": END},
     )
     builder.add_edge("bybit_fetch", "preprocess")
     builder.add_edge("preprocess", "journal_write")

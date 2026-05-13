@@ -56,15 +56,16 @@ def new_data_check_node(state: dict) -> dict:
 
 def bybit_fetch_node(state: dict) -> dict:
     session_id = state.get("session_id", "default")
-    logger.info("bybit_fetch_node start | session_id=%s", session_id)
-
     api_key = os.getenv("BYBIT_API_KEY", "")
     api_secret = os.getenv("BYBIT_API_SECRET", "")
 
+    trades = []
     if api_key and api_secret:
         trades = _fetch_from_api(api_key, api_secret)
-    else:
-        logger.info("bybit_fetch_node: no API key, loading sample_trades.json | session_id=%s", session_id)
+
+    # API 결과 없으면 샘플 폴백
+    if not trades:
+        logger.info("bybit_fetch_node: no trades from API, loading sample_trades.json")
         trades = _load_sample()
 
     now = datetime.now(tz=timezone.utc).isoformat()
